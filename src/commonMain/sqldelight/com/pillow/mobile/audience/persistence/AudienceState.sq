@@ -1,0 +1,135 @@
+CREATE TABLE installation_state (
+  singleton_key TEXT NOT NULL PRIMARY KEY,
+  installation_id TEXT NOT NULL,
+  anonymous_id TEXT NOT NULL,
+  created_at_epoch_ms INTEGER NOT NULL,
+  updated_at_epoch_ms INTEGER NOT NULL
+);
+
+selectInstallation:
+SELECT *
+FROM installation_state
+WHERE singleton_key = 'singleton';
+
+upsertInstallation:
+INSERT OR REPLACE INTO installation_state(
+  singleton_key,
+  installation_id,
+  anonymous_id,
+  created_at_epoch_ms,
+  updated_at_epoch_ms
+)
+VALUES ('singleton', ?, ?, ?, ?);
+
+CREATE TABLE session_state (
+  singleton_key TEXT NOT NULL PRIMARY KEY,
+  session_id TEXT,
+  identified INTEGER NOT NULL,
+  last_bootstrap_at_epoch_ms INTEGER,
+  last_heartbeat_at_epoch_ms INTEGER,
+  updated_at_epoch_ms INTEGER NOT NULL
+);
+
+selectSession:
+SELECT *
+FROM session_state
+WHERE singleton_key = 'singleton';
+
+upsertSession:
+INSERT OR REPLACE INTO session_state(
+  singleton_key,
+  session_id,
+  identified,
+  last_bootstrap_at_epoch_ms,
+  last_heartbeat_at_epoch_ms,
+  updated_at_epoch_ms
+)
+VALUES ('singleton', ?, ?, ?, ?, ?);
+
+clearSession:
+DELETE FROM session_state
+WHERE singleton_key = 'singleton';
+
+CREATE TABLE profile_state (
+  singleton_key TEXT NOT NULL PRIMARY KEY,
+  external_id TEXT,
+  user_properties_json TEXT,
+  updated_at_epoch_ms INTEGER NOT NULL
+);
+
+selectProfile:
+SELECT *
+FROM profile_state
+WHERE singleton_key = 'singleton';
+
+upsertProfile:
+INSERT OR REPLACE INTO profile_state(
+  singleton_key,
+  external_id,
+  user_properties_json,
+  updated_at_epoch_ms
+)
+VALUES ('singleton', ?, ?, ?);
+
+clearProfile:
+DELETE FROM profile_state
+WHERE singleton_key = 'singleton';
+
+CREATE TABLE operation_queue (
+  id TEXT NOT NULL PRIMARY KEY,
+  type TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL,
+  next_attempt_at_epoch_ms INTEGER NOT NULL,
+  created_at_epoch_ms INTEGER NOT NULL,
+  updated_at_epoch_ms INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX operation_queue_dedupe_key_idx ON operation_queue(dedupe_key);
+CREATE INDEX operation_queue_schedule_idx ON operation_queue(status, next_attempt_at_epoch_ms);
+
+selectOperationByDedupeKey:
+SELECT *
+FROM operation_queue
+WHERE dedupe_key = ?;
+
+selectAllOperations:
+SELECT *
+FROM operation_queue
+ORDER BY created_at_epoch_ms ASC;
+
+selectDueOperations:
+SELECT *
+FROM operation_queue
+WHERE status = 'pending'
+  AND next_attempt_at_epoch_ms <= ?
+ORDER BY created_at_epoch_ms ASC;
+
+upsertOperation:
+INSERT OR REPLACE INTO operation_queue(
+  id,
+  type,
+  dedupe_key,
+  payload_json,
+  status,
+  attempt_count,
+  next_attempt_at_epoch_ms,
+  created_at_epoch_ms,
+  updated_at_epoch_ms
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteOperation:
+DELETE FROM operation_queue
+WHERE id = ?;
+
+updateOperationSchedule:
+UPDATE operation_queue
+SET
+  status = ?,
+  attempt_count = ?,
+  next_attempt_at_epoch_ms = ?,
+  updated_at_epoch_ms = ?
+WHERE id = ?;

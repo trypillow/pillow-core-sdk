@@ -1,0 +1,42 @@
+language = Objective-C
+package = com.pillow.mobile.native
+
+---
+#import <Foundation/Foundation.h>
+#import <CoreGraphics/CoreGraphics.h>
+#import <objc/runtime.h>
+
+static id _pillow_nilAccessoryView(id self, SEL _cmd) {
+    return nil;
+}
+
+/**
+ * Creates a WKWebView subclass at runtime with inputAccessoryView returning nil.
+ * Uses the ObjC runtime to avoid putting @implementation in the cinterop ---
+ * section (which the cinterop indexer cannot parse).
+ */
+static id _Nonnull PillowCreateNoAccessoryWebView(CGRect frame, id _Nonnull configuration) {
+    static Class noAccessoryClass = Nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class wkWebViewClass = NSClassFromString(@"WKWebView");
+        noAccessoryClass = objc_allocateClassPair(wkWebViewClass, "PillowNoAccessoryWebView", 0);
+        class_addMethod(noAccessoryClass, sel_registerName("inputAccessoryView"),
+                        (IMP)_pillow_nilAccessoryView, "@@:");
+        objc_registerClassPair(noAccessoryClass);
+    });
+
+    id instance = [noAccessoryClass alloc];
+
+    NSMethodSignature *sig = [instance methodSignatureForSelector:sel_registerName("initWithFrame:configuration:")];
+    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+    [inv setTarget:instance];
+    [inv setSelector:sel_registerName("initWithFrame:configuration:")];
+    [inv setArgument:&frame atIndex:2];
+    [inv setArgument:&configuration atIndex:3];
+    [inv invoke];
+
+    __unsafe_unretained id result;
+    [inv getReturnValue:&result];
+    return result;
+}

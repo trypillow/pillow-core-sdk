@@ -1,0 +1,31 @@
+name: Validate Pillow Core SDK
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configure Android SDK path
+        run: |
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/Users/runner/Library/Android/sdk}}"
+          printf 'sdk.dir=%s\n' "$sdk_root" > local.properties
+
+      - name: Verify shared core
+        run: |
+          ./gradlew verifyCore
