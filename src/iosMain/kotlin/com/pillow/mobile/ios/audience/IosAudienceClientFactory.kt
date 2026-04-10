@@ -3,7 +3,7 @@
   kotlinx.cinterop.ExperimentalForeignApi::class,
 )
 
-package com.pillow.mobile.ios.sdk
+package com.pillow.mobile.ios.audience
 
 import app.cash.sqldelight.driver.native.NativeSqliteDriver
 import com.pillow.mobile.audience.client.AudienceClientImpl

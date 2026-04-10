@@ -3,6 +3,9 @@ package com.pillow.mobile.android.sdk
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import com.pillow.mobile.android.audience.AndroidAudienceClientFactory
+import com.pillow.mobile.android.audience.AndroidPillowSdkPropertyStore
+import com.pillow.mobile.android.audience.createEncryptedPreferences
 import com.pillow.mobile.android.study.PillowStudyPresenter
 import com.pillow.mobile.sdk.reportPillowSdkError
 import com.pillow.mobile.audience.runtime.AudienceClient

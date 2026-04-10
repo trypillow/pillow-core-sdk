@@ -1,4 +1,4 @@
-package com.pillow.mobile.ios.sdk
+package com.pillow.mobile.ios.audience
 
 import com.pillow.mobile.audience.runtime.AudienceJson
 import kotlinx.serialization.encodeToString

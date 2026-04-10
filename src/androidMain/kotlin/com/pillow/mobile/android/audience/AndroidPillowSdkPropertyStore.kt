@@ -1,4 +1,4 @@
-package com.pillow.mobile.android.sdk
+package com.pillow.mobile.android.audience
 
 import android.content.SharedPreferences
 import com.pillow.mobile.audience.runtime.AudienceJson

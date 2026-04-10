@@ -1,5 +1,7 @@
 package com.pillow.mobile.ios.sdk
 
+import com.pillow.mobile.ios.audience.IosAudiencePropertyStore
+import com.pillow.mobile.ios.audience.createComponents
 import com.pillow.mobile.sdk.reportPillowSdkError
 import com.pillow.mobile.audience.runtime.AudienceClient
 import com.pillow.mobile.audience.runtime.AudienceClientConfig
