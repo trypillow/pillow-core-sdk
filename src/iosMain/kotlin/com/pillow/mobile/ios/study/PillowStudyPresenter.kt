@@ -35,7 +35,9 @@ import platform.WebKit.WKUserContentController
 import platform.WebKit.WKUserScript
 import platform.WebKit.WKUserScriptInjectionTime
 import platform.WebKit.WKWebView
+import platform.WebKit.WKProcessPool
 import platform.WebKit.WKWebViewConfiguration
+import platform.WebKit.WKWebsiteDataStore
 
 internal class PillowStudyPresenter(
   private val alias: String,
@@ -65,7 +67,10 @@ internal class PillowStudyPresenter(
         userAgent = userAgent,
         onStudySession = onStudySession,
         onConversationEnded = onConversationEnded,
-        onDismiss = onDismiss,
+        onDismiss = {
+          controller = null
+          onDismiss()
+        },
         logger = logger,
       )
     viewController.modalPresentationStyle = UIModalPresentationPageSheet
@@ -137,6 +142,8 @@ private class PillowStudyViewController(
     )
 
     val configuration = WKWebViewConfiguration()
+    configuration.processPool = WKProcessPool()
+    configuration.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore()
     configuration.userContentController = userContentController
     configuration.allowsInlineMediaPlayback = true
 
@@ -192,11 +199,17 @@ private class PillowStudyViewController(
     super.viewDidDisappear(animated)
     if (isBeingDismissed()) {
       removeKeyboardObservers()
+      // Stop any in-flight loads so the web content process is released promptly.
+      webView?.stopLoading()
+      // Load a blank page to flush the previous page's DOM, JS heap, and media
+      // resources from the web content process before we tear down the view.
+      webView?.loadHTMLString("", baseURL = null)
       // Break the retain cycle: WKUserContentController holds a strong reference
       // to the script message handler (this VC). Without this removal the cycle
       // VC → webView → config → userContentController → VC prevents deallocation.
-      webView?.configuration?.userContentController
-        ?.removeScriptMessageHandlerForName("pillowStudyBridge")
+      val contentController = webView?.configuration?.userContentController
+      contentController?.removeScriptMessageHandlerForName("pillowStudyBridge")
+      contentController?.removeAllUserScripts()
       webView?.navigationDelegate = null
       webView?.removeFromSuperview()
       webView = null
