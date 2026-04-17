@@ -66,4 +66,14 @@ public object PillowSDK {
       delegate = delegate,
     )
   }
+
+  public fun presentLaunchStudyIfAvailable(
+    delegate: PillowStudyDelegate? = null,
+  ) {
+    runtime.presentLaunchStudyIfAvailable(delegate = delegate)
+  }
+
+  public fun onReadyToPresentStudy() {
+    runtime.onReadyToPresentStudy()
+  }
 }

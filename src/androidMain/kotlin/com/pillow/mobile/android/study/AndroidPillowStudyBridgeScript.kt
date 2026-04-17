@@ -1,15 +1,21 @@
 package com.pillow.mobile.android.study
 
+import com.pillow.mobile.sdk.pillowJsJsonLiteral
 import com.pillow.mobile.sdk.pillowJsStringLiteral
+import kotlinx.serialization.json.JsonObject
 
 internal fun createAndroidPillowStudyBridgeScript(
   campaignHandoffToken: String,
   restoredSessionToken: String?,
   forceFreshSession: Boolean,
   audioCapable: Boolean,
+  webDisplay: JsonObject?,
   bridgeName: String,
 ): String {
   val restoredTokenValue = restoredSessionToken?.let(::pillowJsStringLiteral) ?: "null"
+  val displayInstructionsEntry = webDisplay?.let {
+    ",\n        displayInstructions: ${pillowJsJsonLiteral(it)}"
+  } ?: ""
   return """
     (function() {
       window.__PILLOW_MOBILE_CONTEXT__ = {
@@ -17,7 +23,7 @@ internal fun createAndroidPillowStudyBridgeScript(
         restoredSessionToken: $restoredTokenValue,
         forceFreshSession: $forceFreshSession,
         platform: 'android',
-        capabilities: { audio: $audioCapable }
+        capabilities: { audio: $audioCapable }$displayInstructionsEntry
       };
 
       function serializeMessage(message) {

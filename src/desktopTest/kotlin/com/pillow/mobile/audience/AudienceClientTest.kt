@@ -17,6 +17,8 @@ import com.pillow.mobile.audience.runtime.AudienceSecureStore
 import com.pillow.mobile.audience.runtime.AudienceSqlDriverFactory
 import com.pillow.mobile.audience.runtime.AudienceStatus
 import com.pillow.mobile.audience.runtime.AudienceUuidGenerator
+import com.pillow.mobile.study.runtime.LaunchStudyInstruction
+import com.pillow.mobile.study.runtime.readLaunchStudyInstruction
 import java.io.IOException
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -26,6 +28,8 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 class AudienceClientTest {
   @Test
@@ -46,6 +50,40 @@ class AudienceClientTest {
     assertNotNull(bootstrapped.installationId)
     assertNotNull(bootstrapped.anonymousId)
     assertEquals(listOf("/sdk/v1/bootstrap"), httpClient.paths)
+  }
+
+  @Test
+  fun bootstrapPersistsLaunchStudyInstruction() = runTest {
+    val secureStore = InMemoryAudienceSecureStore()
+    val httpClient = FakeAudienceHttpClient().apply {
+      enqueue(
+        "/sdk/v1/bootstrap",
+        bootstrapResponse(
+          sessionId = 101,
+          identified = false,
+          launchStudy = LaunchStudyInstruction(
+            studyId = "demo-launch",
+            webDisplay = buildJsonObject {
+              put("variant", "hero")
+            },
+          ),
+        ),
+      )
+    }
+    val fixture = testFixture(httpClient = httpClient, secureStore = secureStore)
+
+    fixture.client.start()
+    fixture.client.onAppForeground()
+
+    assertEquals(
+      LaunchStudyInstruction(
+        studyId = "demo-launch",
+        webDisplay = buildJsonObject {
+          put("variant", "hero")
+        },
+      ),
+      readLaunchStudyInstruction(secureStore),
+    )
   }
 
   @Test
@@ -76,6 +114,36 @@ class AudienceClientTest {
       listOf("/sdk/v1/bootstrap", "/sdk/v1/session/heartbeat"),
       httpClient.paths,
     )
+  }
+
+  @Test
+  fun heartbeatClearsLaunchStudyWhenBackendStopsReturningIt() = runTest {
+    val secureStore = InMemoryAudienceSecureStore()
+    val httpClient = FakeAudienceHttpClient().apply {
+      enqueue(
+        "/sdk/v1/bootstrap",
+        bootstrapResponse(
+          sessionId = 101,
+          identified = false,
+          launchStudy = LaunchStudyInstruction(studyId = "demo-launch"),
+        ),
+      )
+      enqueue(
+        "/sdk/v1/session/heartbeat",
+        heartbeatResponse(sessionId = 101, launchStudy = null),
+      )
+    }
+    val clock = MutableClock()
+    val fixture = testFixture(httpClient = httpClient, clock = clock, secureStore = secureStore)
+
+    fixture.client.start()
+    fixture.client.onAppForeground()
+    assertEquals("demo-launch", readLaunchStudyInstruction(secureStore)?.studyId)
+
+    clock.advance(61_000L)
+    fixture.client.onAppForeground()
+
+    assertNull(readLaunchStudyInstruction(secureStore))
   }
 
   @Test
@@ -157,6 +225,59 @@ class AudienceClientTest {
       listOf("/sdk/v1/bootstrap", "/sdk/v1/reset"),
       httpClient.paths,
     )
+  }
+
+  @Test
+  fun resetReplacesCachedLaunchStudyInstruction() = runTest {
+    val secureStore = InMemoryAudienceSecureStore()
+    val httpClient = FakeAudienceHttpClient().apply {
+      enqueue(
+        "/sdk/v1/bootstrap",
+        bootstrapResponse(
+          sessionId = 101,
+          identified = false,
+          launchStudy = LaunchStudyInstruction(studyId = "launch-before-reset"),
+        ),
+      )
+      enqueue(
+        "/sdk/v1/reset",
+        bootstrapResponse(
+          sessionId = 202,
+          identified = false,
+          launchStudy = LaunchStudyInstruction(studyId = "launch-after-reset"),
+        ),
+      )
+    }
+    val fixture = testFixture(httpClient = httpClient, secureStore = secureStore)
+
+    fixture.client.start()
+    fixture.client.onAppForeground()
+    assertEquals("launch-before-reset", readLaunchStudyInstruction(secureStore)?.studyId)
+
+    fixture.client.reset()
+
+    assertEquals("launch-after-reset", readLaunchStudyInstruction(secureStore)?.studyId)
+  }
+
+  @Test
+  fun invalidLaunchStudyInstructionIsDiscarded() = runTest {
+    val secureStore = InMemoryAudienceSecureStore()
+    val httpClient = FakeAudienceHttpClient().apply {
+      enqueue(
+        "/sdk/v1/bootstrap",
+        bootstrapResponse(
+          sessionId = 101,
+          identified = false,
+          launchStudyJson = """{"study_id":"   "}""",
+        ),
+      )
+    }
+    val fixture = testFixture(httpClient = httpClient, secureStore = secureStore)
+
+    fixture.client.start()
+    fixture.client.onAppForeground()
+
+    assertNull(readLaunchStudyInstruction(secureStore))
   }
 
   @Test
@@ -278,6 +399,7 @@ class AudienceClientTest {
 
 private data class TestFixture(
   val client: AudienceClientImpl,
+  val secureStore: AudienceSecureStore,
 )
 
 private fun testFixture(
@@ -312,6 +434,7 @@ private fun testFixture(
         logger = TestLogger,
       ),
     ),
+    secureStore = secureStore,
   )
 }
 
@@ -496,9 +619,11 @@ private fun bootstrapResponse(
   identified: Boolean,
   tokenExpiresAt: String = "2026-01-01T00:00:00Z",
   apiBaseUrl: String = "https://example.test",
+  launchStudy: LaunchStudyInstruction? = null,
+  launchStudyJson: String? = null,
 ): String =
   """
-  {"session_token":"${tokenForSession(sessionId)}","token_expires_at":"$tokenExpiresAt","identified":$identified,"endpoints":{"api_base_url":"$apiBaseUrl","study_base_url":"https://study.example.test"}}
+  {"session_token":"${tokenForSession(sessionId)}","token_expires_at":"$tokenExpiresAt","identified":$identified,"endpoints":{"api_base_url":"$apiBaseUrl","study_base_url":"https://study.example.test"}${launchStudyField(launchStudy, launchStudyJson)}}
   """.trimIndent()
 
 private fun identifyResponse(
@@ -507,16 +632,33 @@ private fun identifyResponse(
   merged: Boolean,
   tokenExpiresAt: String = "2026-01-01T00:05:00Z",
   apiBaseUrl: String = "https://example.test",
+  launchStudy: LaunchStudyInstruction? = null,
+  launchStudyJson: String? = null,
 ): String =
   """
-  {"session_token":"${tokenForSession(sessionId)}","token_expires_at":"$tokenExpiresAt","identified":$identified,"merged":$merged,"endpoints":{"api_base_url":"$apiBaseUrl","study_base_url":"https://study.example.test"}}
+  {"session_token":"${tokenForSession(sessionId)}","token_expires_at":"$tokenExpiresAt","identified":$identified,"merged":$merged,"endpoints":{"api_base_url":"$apiBaseUrl","study_base_url":"https://study.example.test"}${launchStudyField(launchStudy, launchStudyJson)}}
   """.trimIndent()
 
 private fun heartbeatResponse(
   sessionId: Int,
   tokenExpiresAt: String = "2026-01-01T00:05:00Z",
   apiBaseUrl: String = "https://example.test",
+  launchStudy: LaunchStudyInstruction? = null,
+  launchStudyJson: String? = null,
 ): String =
   """
-  {"ok":true,"session_token":"${tokenForSession(sessionId)}","token_expires_at":"$tokenExpiresAt","endpoints":{"api_base_url":"$apiBaseUrl","study_base_url":"https://study.example.test"}}
+  {"ok":true,"session_token":"${tokenForSession(sessionId)}","token_expires_at":"$tokenExpiresAt","endpoints":{"api_base_url":"$apiBaseUrl","study_base_url":"https://study.example.test"}${launchStudyField(launchStudy, launchStudyJson)}}
   """.trimIndent()
+
+private fun launchStudyField(
+  launchStudy: LaunchStudyInstruction?,
+  launchStudyJson: String?,
+): String =
+  when {
+    launchStudyJson != null -> ""","launch_study":$launchStudyJson"""
+    launchStudy != null -> {
+      val webDisplayField = launchStudy.webDisplay?.toString()?.let { ""","web_display":$it""" } ?: ""
+      ""","launch_study":{"study_id":"${launchStudy.studyId}"$webDisplayField}"""
+    }
+    else -> ""","launch_study":null"""
+  }

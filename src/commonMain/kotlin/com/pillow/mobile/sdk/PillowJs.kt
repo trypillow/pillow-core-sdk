@@ -1,5 +1,8 @@
 package com.pillow.mobile.sdk
 
+import com.pillow.mobile.audience.runtime.AudienceJson
+import kotlinx.serialization.json.JsonElement
+
 internal fun pillowJsStringLiteral(value: String): String =
   buildString(value.length + 2) {
     append('"')
@@ -21,3 +24,6 @@ internal fun pillowJsStringLiteral(value: String): String =
     }
     append('"')
   }
+
+internal fun pillowJsJsonLiteral(value: JsonElement): String =
+  AudienceJson.instance.encodeToString(JsonElement.serializer(), value)

@@ -11,6 +11,7 @@ import com.pillow.mobile.audience.runtime.AudienceRuntimeEndpoints
 import com.pillow.mobile.audience.runtime.AudienceState
 import com.pillow.mobile.audience.runtime.AudienceStatus
 import com.pillow.mobile.audience.runtime.writeAudienceRuntimeEndpoints
+import com.pillow.mobile.study.runtime.LaunchStudyInstruction
 import com.pillow.mobile.study.runtime.PillowStudy
 import com.pillow.mobile.study.runtime.PresentStudy
 import com.pillow.mobile.study.runtime.SkipStudy
@@ -21,6 +22,8 @@ import kotlin.test.assertNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 class StudyRuntimeTest {
   @Test
@@ -173,6 +176,42 @@ class StudyRuntimeTest {
 
     assertEquals("https://runtime.example.test", httpClient.baseUrls.single())
   }
+
+  @Test
+  fun preparePresentationCarriesLaunchStudyWebDisplayInstructions() = runTest {
+    val launchStudyInstruction =
+      LaunchStudyInstruction(
+        studyId = "demo",
+        webDisplay = buildJsonObject {
+          put("variant", "hero")
+        },
+      )
+    val runtime =
+      StudyRuntime(
+        config =
+          AudienceClientConfig(
+            baseUrl = "https://api.example.test",
+            publishableKey = "pk_live_demo",
+            platform = AudiencePlatform.IOS,
+            sdkVersion = "1.0.0",
+            logger = TestLogger,
+          ),
+        audienceClient = FakeAudienceClient(sessionToken = "aud-session"),
+        httpClient = FakeStudyHttpClient(),
+        secureStore = InMemoryAudienceSecureStore(),
+        logger = TestLogger,
+      )
+
+    val prepared =
+      runtime.preparePresentation(
+        study = PillowStudy(id = "demo"),
+        skipIfAlreadyExposed = false,
+        launchStudyInstruction = launchStudyInstruction,
+      )
+
+    require(prepared is PresentStudy)
+    assertEquals(launchStudyInstruction.webDisplay, prepared.presentation.webDisplay)
+  }
 }
 
 private class FakeAudienceClient(
@@ -192,7 +231,7 @@ private class FakeAudienceClient(
 
   override suspend fun start() = Unit
 
-  override suspend fun onAppForeground(): AudienceState = state.value
+  override suspend fun onAppForeground(forceHeartbeat: Boolean): AudienceState = state.value
 
   override suspend fun onAppBackground() = Unit
 

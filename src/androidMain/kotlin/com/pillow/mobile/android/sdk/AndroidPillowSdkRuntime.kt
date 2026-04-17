@@ -3,6 +3,7 @@ package com.pillow.mobile.android.sdk
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import java.lang.ref.WeakReference
 import com.pillow.mobile.android.audience.AndroidAudienceClientFactory
 import com.pillow.mobile.android.audience.AndroidPillowSdkPropertyStore
 import com.pillow.mobile.android.audience.createEncryptedPreferences
@@ -18,6 +19,7 @@ import com.pillow.mobile.audience.runtime.resolveAudienceControlPlaneBaseUrl
 import com.pillow.mobile.study.runtime.PillowStudy
 import com.pillow.mobile.study.runtime.PillowStudyPresentationOptions
 import com.pillow.mobile.study.runtime.PillowStudyDelegate
+import com.pillow.mobile.study.runtime.LaunchStudyInstruction
 import com.pillow.mobile.study.runtime.PresentStudy
 import com.pillow.mobile.study.runtime.SkipStudy
 import com.pillow.mobile.study.runtime.StudyRuntime
@@ -42,6 +44,10 @@ internal class AndroidPillowSdkRuntime {
   private var initializationJob: Job? = null
   private var activeStudyPresenter: PillowStudyPresenter? = null
   private var activeSdkVersion: String = "0.1.0"
+  private var isAppInForeground: Boolean = false
+  private var isReadyToPresentStudy: Boolean = false
+  private var presentationActivityRef: WeakReference<Activity>? = null
+  private var launchStudyPresentationInFlight: Boolean = false
   fun initialize(
     context: Context,
     publishableKey: String,
@@ -92,19 +98,50 @@ internal class AndroidPillowSdkRuntime {
           store.clearExternalId()
           store.clearUserProperties()
           runtime.clearAllStoredSessions()
+          runtime.clearLaunchStudyInstruction()
         }
 
         lifecycleObserver = AndroidPillowSdkLifecycleObserver(
-          onForeground = { launchSdkCall { requireClient().onAppForeground() } },
-          onBackground = { launchSdkCall { requireClient().onAppBackground() } },
+          onForegroundCallback = {
+            isAppInForeground = true
+            launchSdkCall {
+              requireClient().onAppForeground()
+              maybePresentPendingLaunchStudyLocked()
+            }
+          },
+          onBackgroundCallback = {
+            isAppInForeground = false
+            isReadyToPresentStudy = false
+            launchSdkCall { requireClient().onAppBackground() }
+          },
+          onActivityResumedCallback = { activity ->
+            presentationActivityRef = WeakReference(activity)
+            if (isReadyToPresentStudy) {
+              launchSdkCall { maybePresentPendingLaunchStudyLocked() }
+            }
+          },
+          onActivityPausedCallback = { activity ->
+            val current = presentationActivityRef?.get()
+            if (current === activity) {
+              presentationActivityRef = null
+            }
+          },
         ).also { observer -> observer.install(application) }
         components.audienceClient.start()
         components.audienceClient.setUserProperties(store.readUserProperties())
         store.readExternalId()?.let { externalId ->
           components.audienceClient.identify(externalId)
         }
-        components.audienceClient.onAppForeground()
+        components.audienceClient.onAppForeground(forceHeartbeat = true)
       }
+    }
+  }
+
+  fun onReadyToPresentStudy(activity: Activity) {
+    presentationActivityRef = WeakReference(activity)
+    isReadyToPresentStudy = true
+    launchSdkCall {
+      maybePresentPendingLaunchStudyLocked()
     }
   }
 
@@ -116,6 +153,7 @@ internal class AndroidPillowSdkRuntime {
     launchSdkCall {
       val client = requireClient()
       client.identify(trimmedExternalId)
+      maybePresentPendingLaunchStudyLocked()
     }
   }
 
@@ -154,8 +192,10 @@ internal class AndroidPillowSdkRuntime {
     launchSdkCall {
       val client = requireClient()
       requireStudyRuntime().clearAllStoredSessions()
+      requireStudyRuntime().clearLaunchStudyInstruction()
       client.setUserProperties(null)
       client.reset()
+      maybePresentPendingLaunchStudyLocked()
     }
   }
 
@@ -165,6 +205,65 @@ internal class AndroidPillowSdkRuntime {
     options: PillowStudyPresentationOptions,
     delegate: PillowStudyDelegate?,
   ) {
+    presentStudyInternal(
+      activity = activity,
+      study = study,
+      options = options,
+      delegate = delegate,
+      launchStudyInstruction = null,
+      clearLaunchStudyOnPresent = false,
+    )
+  }
+
+  fun presentLaunchStudyIfAvailable(
+    activity: Activity,
+    delegate: PillowStudyDelegate?,
+  ) {
+    presentationActivityRef = WeakReference(activity)
+    val pendingInitialization = initializationJob
+    scope.launch {
+      pendingInitialization?.join()
+      val launchStudyInstruction = try {
+        mutex.withLock {
+          if (launchStudyPresentationInFlight || activeStudyPresenter != null) {
+            return@withLock null
+          }
+          requireClient().onAppForeground()
+          val instruction = requireStudyRuntime().readLaunchStudyInstruction()
+          if (instruction != null) {
+            launchStudyPresentationInFlight = true
+          }
+          instruction
+        }
+      } catch (error: Throwable) {
+        mutex.withLock {
+          launchStudyPresentationInFlight = false
+        }
+        reportPillowSdkError(error = error, logger = sdkLogger)
+        return@launch
+      }
+      if (launchStudyInstruction == null) {
+        return@launch
+      }
+      presentStudyInternal(
+        activity = activity,
+        study = PillowStudy(id = launchStudyInstruction.studyId),
+        options = PillowStudyPresentationOptions(),
+        delegate = delegate,
+        launchStudyInstruction = launchStudyInstruction,
+        clearLaunchStudyOnPresent = true,
+      )
+    }
+  }
+
+  private fun presentStudyInternal(
+    activity: Activity,
+    study: PillowStudy,
+    options: PillowStudyPresentationOptions,
+    delegate: PillowStudyDelegate?,
+    launchStudyInstruction: LaunchStudyInstruction?,
+    clearLaunchStudyOnPresent: Boolean,
+  ) {
     sdkLogger.info("Presenting study with alias '${study.id}'")
     val pendingInitialization = initializationJob
     scope.launch {
@@ -172,8 +271,20 @@ internal class AndroidPillowSdkRuntime {
       try {
         mutex.withLock {
           val runtime = requireStudyRuntime()
-          when (val prepared = runtime.preparePresentation(study, options.skipIfAlreadyExposed)) {
+          when (
+            val prepared = runtime.preparePresentation(
+              study = study,
+              skipIfAlreadyExposed = options.skipIfAlreadyExposed,
+              launchStudyInstruction = launchStudyInstruction,
+            )
+          ) {
             is SkipStudy -> {
+              if (launchStudyInstruction != null) {
+                launchStudyPresentationInFlight = false
+              }
+              if (clearLaunchStudyOnPresent) {
+                runtime.clearLaunchStudyInstruction()
+              }
               sdkLogger.info("Skipping study '${study.id}' because it was already exposed")
               launchOnMainThread {
                 delegate?.studyDidSkip(study)
@@ -190,6 +301,9 @@ internal class AndroidPillowSdkRuntime {
 
               launchOnMainThread {
                 if (activeStudyPresenter != null) {
+                  if (launchStudyInstruction != null) {
+                    launchStudyPresentationInFlight = false
+                  }
                   sdkLogger.warn("A study is already being presented, ignoring request for '${study.id}'")
                   delegate?.studyDidFailToLoad(study, IllegalStateException("A study is already being presented"))
                   return@launchOnMainThread
@@ -202,6 +316,7 @@ internal class AndroidPillowSdkRuntime {
                   campaignHandoffToken = presentation.campaignHandoffToken,
                   restoredSessionToken = restoredSessionToken,
                   forceFreshSession = options.forceFreshSession,
+                  webDisplay = presentation.webDisplay,
                   userAgent = sdkUserAgent(),
                   onStudySession = { alias, sessionToken ->
                     launchSdkCall {
@@ -216,14 +331,26 @@ internal class AndroidPillowSdkRuntime {
                   onDismiss = {
                     activeStudyPresenter = null
                     delegate?.studyDidFinish(study)
+                    launchSdkCall { maybePresentPendingLaunchStudyLocked() }
                   },
                   logger = sdkLogger,
                 )
 
                 if (presenter.present()) {
                   activeStudyPresenter = presenter
+                  if (launchStudyInstruction != null) {
+                    launchStudyPresentationInFlight = false
+                  }
+                  if (clearLaunchStudyOnPresent) {
+                    launchSdkCall {
+                      requireStudyRuntime().clearLaunchStudyInstruction()
+                    }
+                  }
                   delegate?.studyDidPresent(study)
                 } else {
+                  if (launchStudyInstruction != null) {
+                    launchStudyPresentationInFlight = false
+                  }
                   sdkLogger.error("Failed to present study modal")
                   delegate?.studyDidFailToLoad(study, IllegalStateException("Failed to present study modal"))
                 }
@@ -232,6 +359,11 @@ internal class AndroidPillowSdkRuntime {
           }
         }
       } catch (error: Throwable) {
+        mutex.withLock {
+          if (launchStudyInstruction != null) {
+            launchStudyPresentationInFlight = false
+          }
+        }
         reportPillowSdkError(error = error, logger = sdkLogger)
         scope.launch(Dispatchers.Main) { delegate?.studyDidFailToLoad(study, error) }
       }
@@ -294,6 +426,38 @@ internal class AndroidPillowSdkRuntime {
 
   private fun requireStudyRuntime(): StudyRuntime =
     requireNotNull(studyRuntime) { "PillowSDK.initialize must be called first" }
+
+  private suspend fun maybePresentPendingLaunchStudyLocked() {
+    if (
+      !isAppInForeground ||
+      !isReadyToPresentStudy ||
+      activeStudyPresenter != null ||
+      launchStudyPresentationInFlight
+    ) {
+      return
+    }
+
+    val activity = resolvePresentationActivity() ?: return
+    val launchStudyInstruction = requireStudyRuntime().readLaunchStudyInstruction() ?: return
+    launchStudyPresentationInFlight = true
+    presentStudyInternal(
+      activity = activity,
+      study = PillowStudy(id = launchStudyInstruction.studyId),
+      options = PillowStudyPresentationOptions(),
+      delegate = null,
+      launchStudyInstruction = launchStudyInstruction,
+      clearLaunchStudyOnPresent = true,
+    )
+  }
+
+  private fun resolvePresentationActivity(): Activity? {
+    val activity = presentationActivityRef?.get() ?: return null
+    if (activity.isFinishing || activity.isDestroyed) {
+      presentationActivityRef = null
+      return null
+    }
+    return activity
+  }
 
   private fun sdkVersion(context: Context): String =
     try {

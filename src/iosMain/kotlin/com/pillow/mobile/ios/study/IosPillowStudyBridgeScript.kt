@@ -1,14 +1,20 @@
 package com.pillow.mobile.ios.study
 
+import com.pillow.mobile.sdk.pillowJsJsonLiteral
 import com.pillow.mobile.sdk.pillowJsStringLiteral
+import kotlinx.serialization.json.JsonObject
 
 internal fun createIosPillowStudyBridgeScript(
   campaignHandoffToken: String,
   restoredSessionToken: String?,
   forceFreshSession: Boolean,
   audioCapable: Boolean,
+  webDisplay: JsonObject?,
 ): String {
   val restoredTokenValue = restoredSessionToken?.let(::pillowJsStringLiteral) ?: "null"
+  val displayInstructionsEntry = webDisplay?.let {
+    ",\n        displayInstructions: ${pillowJsJsonLiteral(it)}"
+  } ?: ""
   return """
     (function() {
       window.__PILLOW_MOBILE_CONTEXT__ = {
@@ -16,7 +22,7 @@ internal fun createIosPillowStudyBridgeScript(
         restoredSessionToken: $restoredTokenValue,
         forceFreshSession: $forceFreshSession,
         platform: 'ios',
-        capabilities: { audio: $audioCapable }
+        capabilities: { audio: $audioCapable }$displayInstructionsEntry
       };
 
       function forwardToNative(message) {

@@ -1,6 +1,7 @@
 package com.pillow.mobile.audience.api
 
 import com.pillow.mobile.audience.runtime.AudienceRuntimeEndpoints
+import com.pillow.mobile.study.runtime.LaunchStudyInstruction
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -29,6 +30,7 @@ internal data class AudienceBootstrapResponse(
   @SerialName("token_expires_at") val tokenExpiresAt: String,
   val identified: Boolean,
   val endpoints: AudienceRuntimeEndpoints,
+  @SerialName("launch_study") val launchStudy: LaunchStudyInstruction? = null,
 )
 
 @Serializable
@@ -55,6 +57,7 @@ internal data class AudienceIdentifyResponse(
   val identified: Boolean,
   val merged: Boolean,
   val endpoints: AudienceRuntimeEndpoints,
+  @SerialName("launch_study") val launchStudy: LaunchStudyInstruction? = null,
 )
 
 @Serializable
@@ -77,6 +80,7 @@ internal data class AudienceHeartbeatResponse(
   @SerialName("session_token") val sessionToken: String? = null,
   @SerialName("token_expires_at") val tokenExpiresAt: String? = null,
   val endpoints: AudienceRuntimeEndpoints,
+  @SerialName("launch_study") val launchStudy: LaunchStudyInstruction? = null,
 )
 
 @Serializable

@@ -38,6 +38,7 @@ import com.pillow.mobile.audience.runtime.computeNextAttemptEpochMs
 import com.pillow.mobile.audience.runtime.decodeAudienceSessionToken
 import com.pillow.mobile.audience.runtime.readAudienceRuntimeEndpoints
 import com.pillow.mobile.audience.runtime.writeAudienceRuntimeEndpoints
+import com.pillow.mobile.study.runtime.writeLaunchStudyInstruction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -91,7 +92,7 @@ internal class AudienceClientImpl(
     }
   }
 
-  override suspend fun onAppForeground(): AudienceState =
+  override suspend fun onAppForeground(forceHeartbeat: Boolean): AudienceState =
     mutex.withLock {
       initializeLocked()
       drainQueueLocked()
@@ -109,7 +110,7 @@ internal class AudienceClientImpl(
       if (sessionId.isNullOrBlank() || sessionToken.isNullOrBlank()) {
         enqueueBootstrapLocked()
         drainQueueLocked()
-      } else if (shouldHeartbeat(session.lastHeartbeatAtEpochMs)) {
+      } else if (forceHeartbeat || shouldHeartbeat(session.lastHeartbeatAtEpochMs)) {
         enqueueHeartbeatLocked(sessionId)
         drainQueueLocked()
         // If the heartbeat failed and cleared the session, re-bootstrap immediately
@@ -258,6 +259,7 @@ internal class AudienceClientImpl(
         }
         clearSessionTokenLocked()
         secureStore.clearValue(AUDIENCE_RUNTIME_ENDPOINTS_KEY)
+        writeLaunchStudyInstruction(secureStore, null)
       }
       store.saveInstallation(
         InstallationStateRecord(
@@ -406,6 +408,7 @@ internal class AudienceClientImpl(
     val claims = decodeAudienceSessionToken(response.sessionToken)
     writeRuntimeEndpointsLocked(response.endpoints)
     writeSessionTokenLocked(response.sessionToken)
+    writeLaunchStudyInstruction(secureStore, response.launchStudy)
     store.transaction {
       store.saveSession(
         SessionStateRecord(
@@ -451,6 +454,7 @@ internal class AudienceClientImpl(
     val claims = decodeAudienceSessionToken(effectiveToken)
     writeRuntimeEndpointsLocked(response.endpoints)
     writeSessionTokenLocked(effectiveToken)
+    writeLaunchStudyInstruction(secureStore, response.launchStudy)
     store.transaction {
       store.saveSession(
         session.copy(
@@ -484,6 +488,7 @@ internal class AudienceClientImpl(
     val claims = decodeAudienceSessionToken(response.sessionToken)
     writeRuntimeEndpointsLocked(response.endpoints)
     writeSessionTokenLocked(response.sessionToken)
+    writeLaunchStudyInstruction(secureStore, response.launchStudy)
     store.transaction {
       store.saveSession(
         session.copy(
@@ -571,6 +576,7 @@ internal class AudienceClientImpl(
     val claims = decodeAudienceSessionToken(response.sessionToken)
     writeRuntimeEndpointsLocked(response.endpoints)
     writeSessionTokenLocked(response.sessionToken)
+    writeLaunchStudyInstruction(secureStore, response.launchStudy)
     store.transaction {
       store.saveInstallation(
         installation.copy(

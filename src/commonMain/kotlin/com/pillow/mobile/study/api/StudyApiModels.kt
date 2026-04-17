@@ -8,6 +8,7 @@ internal data class PrepareCampaignRequest(
   @SerialName("session_token") val sessionToken: String,
   val alias: String,
   @SerialName("skip_if_already_exposed") val skipIfAlreadyExposed: Boolean,
+  @SerialName("distribution_token") val distributionToken: String? = null,
 )
 
 @Serializable

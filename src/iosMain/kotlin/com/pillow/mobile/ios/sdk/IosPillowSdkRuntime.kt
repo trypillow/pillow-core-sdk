@@ -10,6 +10,7 @@ import com.pillow.mobile.audience.runtime.AudiencePlatform
 import com.pillow.mobile.audience.runtime.normalizeAudienceBaseUrl
 import com.pillow.mobile.audience.runtime.resolveAudienceControlPlaneBaseUrl
 import com.pillow.mobile.ios.study.PillowStudyPresenter
+import com.pillow.mobile.study.runtime.LaunchStudyInstruction
 import com.pillow.mobile.study.runtime.PillowStudy
 import com.pillow.mobile.study.runtime.PillowStudyPresentationOptions
 import com.pillow.mobile.study.runtime.PillowStudyDelegate
@@ -41,6 +42,8 @@ internal class IosPillowSdkRuntime {
   private var initializationJob: Job? = null
   private var activeStudyPresenter: PillowStudyPresenter? = null
   private var isAppInForeground: Boolean = false
+  private var isReadyToPresentStudy: Boolean = false
+  private var launchStudyPresentationInFlight: Boolean = false
   fun initialize(
     publishableKey: String,
   ) {
@@ -81,6 +84,7 @@ internal class IosPillowSdkRuntime {
           propertyStore.clearExternalId()
           propertyStore.clearUserProperties()
           runtime.clearAllStoredSessions()
+          runtime.clearLaunchStudyInstruction()
         }
 
         client.start()
@@ -89,7 +93,7 @@ internal class IosPillowSdkRuntime {
           client.identify(externalId)
         }
         if (appIsActive) {
-          client.onAppForeground()
+          client.onAppForeground(forceHeartbeat = true)
         }
       }
       lifecycleObserver = createLifecycleObserver()
@@ -104,6 +108,7 @@ internal class IosPillowSdkRuntime {
     launchSdkCall {
       val client = requireClient()
       client.identify(trimmedExternalId)
+      maybePresentPendingLaunchStudyLocked()
     }
   }
 
@@ -142,8 +147,17 @@ internal class IosPillowSdkRuntime {
     launchSdkCall {
       val client = requireClient()
       requireStudyRuntime().clearAllStoredSessions()
+      requireStudyRuntime().clearLaunchStudyInstruction()
       client.setUserProperties(null)
       client.reset()
+      maybePresentPendingLaunchStudyLocked()
+    }
+  }
+
+  fun onReadyToPresentStudy() {
+    isReadyToPresentStudy = true
+    launchSdkCall {
+      maybePresentPendingLaunchStudyLocked()
     }
   }
 
@@ -152,6 +166,60 @@ internal class IosPillowSdkRuntime {
     options: PillowStudyPresentationOptions,
     delegate: PillowStudyDelegate?,
   ) {
+    presentStudyInternal(
+      study = study,
+      options = options,
+      delegate = delegate,
+      launchStudyInstruction = null,
+      clearLaunchStudyOnPresent = false,
+    )
+  }
+
+  fun presentLaunchStudyIfAvailable(
+    delegate: PillowStudyDelegate?,
+  ) {
+    val pendingInitialization = initializationJob
+    scope.launch {
+      pendingInitialization?.join()
+      val launchStudyInstruction = try {
+        mutex.withLock {
+          if (launchStudyPresentationInFlight || activeStudyPresenter != null) {
+            return@withLock null
+          }
+          requireClient().onAppForeground()
+          val instruction = requireStudyRuntime().readLaunchStudyInstruction()
+          if (instruction != null) {
+            launchStudyPresentationInFlight = true
+          }
+          instruction
+        }
+      } catch (error: Throwable) {
+        mutex.withLock {
+          launchStudyPresentationInFlight = false
+        }
+        reportPillowSdkError(error = error, logger = sdkLogger)
+        return@launch
+      }
+      if (launchStudyInstruction == null) {
+        return@launch
+      }
+      presentStudyInternal(
+        study = PillowStudy(id = launchStudyInstruction.studyId),
+        options = PillowStudyPresentationOptions(),
+        delegate = delegate,
+        launchStudyInstruction = launchStudyInstruction,
+        clearLaunchStudyOnPresent = true,
+      )
+    }
+  }
+
+  private fun presentStudyInternal(
+    study: PillowStudy,
+    options: PillowStudyPresentationOptions,
+    delegate: PillowStudyDelegate?,
+    launchStudyInstruction: LaunchStudyInstruction?,
+    clearLaunchStudyOnPresent: Boolean,
+  ) {
     sdkLogger.info("Presenting study with alias '${study.id}'")
     val pendingInitialization = initializationJob
     scope.launch {
@@ -159,8 +227,20 @@ internal class IosPillowSdkRuntime {
       try {
         mutex.withLock {
           val runtime = requireStudyRuntime()
-          when (val prepared = runtime.preparePresentation(study, options.skipIfAlreadyExposed)) {
+          when (
+            val prepared = runtime.preparePresentation(
+              study = study,
+              skipIfAlreadyExposed = options.skipIfAlreadyExposed,
+              launchStudyInstruction = launchStudyInstruction,
+            )
+          ) {
             is SkipStudy -> {
+              if (launchStudyInstruction != null) {
+                launchStudyPresentationInFlight = false
+              }
+              if (clearLaunchStudyOnPresent) {
+                runtime.clearLaunchStudyInstruction()
+              }
               sdkLogger.info("Skipping study '${study.id}' because it was already exposed")
               withContext(Dispatchers.Main) {
                 delegate?.studyDidSkip(study)
@@ -177,6 +257,9 @@ internal class IosPillowSdkRuntime {
 
               withContext(Dispatchers.Main) {
                 if (activeStudyPresenter != null) {
+                  if (launchStudyInstruction != null) {
+                    launchStudyPresentationInFlight = false
+                  }
                   sdkLogger.warn("A study is already being presented, ignoring request for '${study.id}'")
                   delegate?.studyDidFailToLoad(study, IllegalStateException("A study is already being presented"))
                   return@withContext
@@ -188,6 +271,7 @@ internal class IosPillowSdkRuntime {
                   campaignHandoffToken = presentation.campaignHandoffToken,
                   restoredSessionToken = restoredSessionToken,
                   forceFreshSession = options.forceFreshSession,
+                  webDisplay = presentation.webDisplay,
                   userAgent = sdkUserAgent(),
                   onStudySession = { alias, sessionToken ->
                     launchSdkCall {
@@ -202,14 +286,26 @@ internal class IosPillowSdkRuntime {
                   onDismiss = {
                     activeStudyPresenter = null
                     delegate?.studyDidFinish(study)
+                    launchSdkCall { maybePresentPendingLaunchStudyLocked() }
                   },
                   logger = sdkLogger,
                 )
 
                 if (presenter.present()) {
                   activeStudyPresenter = presenter
+                  if (launchStudyInstruction != null) {
+                    launchStudyPresentationInFlight = false
+                  }
+                  if (clearLaunchStudyOnPresent) {
+                    launchSdkCall {
+                      requireStudyRuntime().clearLaunchStudyInstruction()
+                    }
+                  }
                   delegate?.studyDidPresent(study)
                 } else {
+                  if (launchStudyInstruction != null) {
+                    launchStudyPresentationInFlight = false
+                  }
                   sdkLogger.error("Failed to present study modal")
                   delegate?.studyDidFailToLoad(study, IllegalStateException("Failed to present study modal"))
                 }
@@ -218,6 +314,11 @@ internal class IosPillowSdkRuntime {
           }
         }
       } catch (error: Throwable) {
+        mutex.withLock {
+          if (launchStudyInstruction != null) {
+            launchStudyPresentationInFlight = false
+          }
+        }
         reportPillowSdkError(error = error, logger = sdkLogger)
         withContext(Dispatchers.Main) { delegate?.studyDidFailToLoad(study, error) }
       }
@@ -264,6 +365,27 @@ internal class IosPillowSdkRuntime {
   private fun requireStudyRuntime(): StudyRuntime =
     requireNotNull(studyRuntime) { "PillowSDK.initialize must be called first" }
 
+  private suspend fun maybePresentPendingLaunchStudyLocked() {
+    if (
+      !isReadyToPresentStudy ||
+      !isAppInForeground ||
+      activeStudyPresenter != null ||
+      launchStudyPresentationInFlight
+    ) {
+      return
+    }
+
+    val launchStudyInstruction = requireStudyRuntime().readLaunchStudyInstruction() ?: return
+    launchStudyPresentationInFlight = true
+    presentStudyInternal(
+      study = PillowStudy(id = launchStudyInstruction.studyId),
+      options = PillowStudyPresentationOptions(),
+      delegate = null,
+      launchStudyInstruction = launchStudyInstruction,
+      clearLaunchStudyOnPresent = true,
+    )
+  }
+
   private fun sdkVersion(): String =
     (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String)
       ?: "0.1.0"
@@ -287,11 +409,15 @@ internal class IosPillowSdkRuntime {
     IosPillowSdkLifecycleObserver(
       onForeground = {
         if (markAppForeground()) {
-          launchSdkCall { requireClient().onAppForeground() }
+          launchSdkCall {
+            requireClient().onAppForeground()
+            maybePresentPendingLaunchStudyLocked()
+          }
         }
       },
       onBackground = {
         if (markAppBackground()) {
+          isReadyToPresentStudy = false
           launchSdkCall { requireClient().onAppBackground() }
         }
       },

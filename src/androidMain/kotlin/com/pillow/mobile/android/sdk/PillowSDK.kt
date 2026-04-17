@@ -62,6 +62,20 @@ public object PillowSDK {
     )
   }
 
+  public fun presentLaunchStudyIfAvailable(
+    activity: Activity,
+    delegate: PillowStudyDelegate? = null,
+  ) {
+    runtime.presentLaunchStudyIfAvailable(
+      activity = activity,
+      delegate = delegate,
+    )
+  }
+
+  public fun onReadyToPresentStudy(activity: Activity) {
+    runtime.onReadyToPresentStudy(activity)
+  }
+
   public fun onRequestPermissionsResult(
     requestCode: Int,
     permissions: Array<String>,

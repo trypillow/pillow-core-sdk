@@ -31,6 +31,7 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.pillow.mobile.audience.runtime.AudienceLogger
+import kotlinx.serialization.json.JsonObject
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -41,6 +42,7 @@ internal class PillowStudyPresenter(
   private val campaignHandoffToken: String,
   private val restoredSessionToken: String?,
   private val forceFreshSession: Boolean,
+  private val webDisplay: JsonObject?,
   private val userAgent: String,
   private val onStudySession: (alias: String, sessionToken: String) -> Unit,
   private val onConversationEnded: (alias: String) -> Unit,
@@ -545,6 +547,7 @@ internal class PillowStudyPresenter(
         restoredSessionToken = restoredSessionToken,
         forceFreshSession = forceFreshSession,
         audioCapable = hasManifestPermission(android.Manifest.permission.RECORD_AUDIO),
+        webDisplay = webDisplay,
         bridgeName = BRIDGE_NAME,
       ),
       setOf(resolveAllowedOriginRule()),
@@ -557,6 +560,7 @@ internal class PillowStudyPresenter(
       restoredSessionToken = restoredSessionToken,
       forceFreshSession = forceFreshSession,
       audioCapable = hasManifestPermission(android.Manifest.permission.RECORD_AUDIO),
+      webDisplay = webDisplay,
       bridgeName = BRIDGE_NAME,
     )
     webView?.evaluateJavascript(bootstrapScript, null)

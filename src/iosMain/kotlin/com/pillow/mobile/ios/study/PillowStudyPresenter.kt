@@ -6,6 +6,7 @@ import com.pillow.mobile.audience.runtime.AudienceLogger
 import com.pillow.mobile.native.PillowCreateNoAccessoryWebView
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.useContents
+import kotlinx.serialization.json.JsonObject
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionRecordPermissionDenied
 import platform.CoreGraphics.CGRectMake
@@ -45,6 +46,7 @@ internal class PillowStudyPresenter(
   private val campaignHandoffToken: String,
   private val restoredSessionToken: String?,
   private val forceFreshSession: Boolean,
+  private val webDisplay: JsonObject?,
   private val userAgent: String,
   private val onStudySession: (alias: String, sessionToken: String) -> Unit,
   private val onConversationEnded: (alias: String) -> Unit,
@@ -63,6 +65,7 @@ internal class PillowStudyPresenter(
           restoredSessionToken = restoredSessionToken,
           forceFreshSession = forceFreshSession,
           audioCapable = isMicrophoneAvailable(),
+          webDisplay = webDisplay,
         ),
         userAgent = userAgent,
         onStudySession = onStudySession,

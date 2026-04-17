@@ -49,7 +49,7 @@ public data class AudienceClientConfig(
 public interface AudienceClient {
   public suspend fun start()
 
-  public suspend fun onAppForeground(): AudienceState
+  public suspend fun onAppForeground(forceHeartbeat: Boolean = false): AudienceState
 
   public suspend fun onAppBackground()
 
