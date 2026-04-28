@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-04-28
+
+- Documentation-only release. No runtime changes.
+
 ## [0.1.5] - 2026-04-28
 
 - Drop `AudienceInstallSentinel`. The SQLite installation row is now the sole source of truth for fresh-install detection, fixing spurious installation_id rotations on iOS when NSUserDefaults didn't flush before SIGKILL.
