@@ -11,7 +11,6 @@ import com.pillow.mobile.audience.runtime.AudienceClient
 import com.pillow.mobile.audience.runtime.AudienceClientConfig
 import com.pillow.mobile.audience.runtime.AudienceDependencies
 import com.pillow.mobile.audience.runtime.AudienceClock
-import com.pillow.mobile.audience.runtime.AudienceInstallSentinel
 import com.pillow.mobile.audience.runtime.AudienceMetadata
 import com.pillow.mobile.audience.runtime.AudienceMetadataProvider
 import com.pillow.mobile.audience.runtime.AudienceSecureStore
@@ -20,7 +19,6 @@ import com.pillow.mobile.audience.runtime.AudienceUuidGenerator
 import com.pillow.mobile.audience.runtime.KtorAudienceHttpClient
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
-import java.io.File
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
@@ -39,7 +37,6 @@ public object AndroidAudienceClientFactory {
       secureStore = AndroidAudienceSecureStore(context.applicationContext),
       metadataProvider = AndroidAudienceMetadataProvider(context.applicationContext),
       sqlDriverFactory = AndroidAudienceSqlDriverFactory(context.applicationContext),
-      installSentinel = AndroidAudienceInstallSentinel(context.applicationContext),
       clock = object : AudienceClock {
         override fun nowEpochMillis(): Long = System.currentTimeMillis()
       },
@@ -142,24 +139,6 @@ private fun buildEncryptedPreferences(
     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
   )
-
-/**
- * Uses a marker file in `noBackupFilesDir` which is excluded from Android auto-backup
- * and always deleted on app uninstall. This lets the SDK detect reinstalls even when
- * the SQLite database is restored from a cloud backup.
- */
-private class AndroidAudienceInstallSentinel(
-  context: Context,
-) : AudienceInstallSentinel {
-  private val sentinelFile = File(context.noBackupFilesDir, ".pillow_install_sentinel")
-
-  override fun exists(): Boolean = sentinelFile.exists()
-
-  override fun mark() {
-    sentinelFile.parentFile?.mkdirs()
-    sentinelFile.createNewFile()
-  }
-}
 
 private class AndroidAudienceMetadataProvider(
   private val context: Context,

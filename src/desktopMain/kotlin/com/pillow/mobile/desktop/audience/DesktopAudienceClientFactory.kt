@@ -7,7 +7,6 @@ import com.pillow.mobile.audience.runtime.AudienceClient
 import com.pillow.mobile.audience.runtime.AudienceClientConfig
 import com.pillow.mobile.audience.runtime.AudienceClock
 import com.pillow.mobile.audience.runtime.AudienceDependencies
-import com.pillow.mobile.audience.runtime.AudienceInstallSentinel
 import com.pillow.mobile.audience.runtime.AudienceMetadata
 import com.pillow.mobile.audience.runtime.AudienceMetadataProvider
 import com.pillow.mobile.audience.runtime.AudienceSecureStore
@@ -39,7 +38,6 @@ public object DesktopAudienceClientFactory {
         secureStore = secureStore,
         metadataProvider = metadataProvider,
         sqlDriverFactory = DesktopAudienceSqlDriverFactory(databasePath),
-        installSentinel = DesktopAudienceInstallSentinel(databasePath),
         clock = object : AudienceClock {
           override fun nowEpochMillis(): Long = System.currentTimeMillis()
         },
@@ -92,19 +90,6 @@ public class DesktopAudienceMetadataProvider : AudienceMetadataProvider {
       locale = Locale.getDefault().toLanguageTag(),
       timezone = TimeZone.getDefault().id,
     )
-}
-
-private class DesktopAudienceInstallSentinel(
-  databasePath: String,
-) : AudienceInstallSentinel {
-  private val sentinelFile = File(File(databasePath).parentFile, ".pillow_install_sentinel")
-
-  override fun exists(): Boolean = sentinelFile.exists()
-
-  override fun mark() {
-    sentinelFile.parentFile?.mkdirs()
-    sentinelFile.createNewFile()
-  }
 }
 
 private class DesktopAudienceSqlDriverFactory(

@@ -12,7 +12,6 @@ import com.pillow.mobile.audience.runtime.AudienceClient
 import com.pillow.mobile.audience.runtime.AudienceClientConfig
 import com.pillow.mobile.audience.runtime.AudienceClock
 import com.pillow.mobile.audience.runtime.AudienceDependencies
-import com.pillow.mobile.audience.runtime.AudienceInstallSentinel
 import com.pillow.mobile.audience.runtime.AudienceMetadata
 import com.pillow.mobile.audience.runtime.AudienceMetadataProvider
 import com.pillow.mobile.audience.runtime.AudienceSecureStore
@@ -46,7 +45,6 @@ import platform.Foundation.NSLog
 import platform.Foundation.NSString
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.NSUUID
-import platform.Foundation.NSUserDefaults
 import platform.Foundation.create
 import platform.Security.SecItemAdd
 import platform.Security.SecItemCopyMatching
@@ -83,7 +81,6 @@ internal fun createComponents(config: AudienceClientConfig): IosAudienceClientCo
       secureStore = IosAudienceSecureStore(),
       metadataProvider = IosAudienceMetadataProvider(),
       sqlDriverFactory = IosAudienceSqlDriverFactory(),
-      installSentinel = IosAudienceInstallSentinel(),
       clock = object : AudienceClock {
         override fun nowEpochMillis(): Long = time(null).toLong() * 1_000L
       },
@@ -126,24 +123,6 @@ private class IosAudienceMetadataProvider : AudienceMetadataProvider {
       locale = null,
       timezone = null,
     )
-}
-
-/**
- * Uses NSUserDefaults which lives in the app sandbox and is deleted on uninstall.
- * Unlike Keychain items (used by IosAudienceSecureStore), NSUserDefaults does not
- * persist across reinstalls, making it suitable for detecting fresh installs.
- */
-private class IosAudienceInstallSentinel : AudienceInstallSentinel {
-  override fun exists(): Boolean =
-    NSUserDefaults.standardUserDefaults.boolForKey(SENTINEL_KEY)
-
-  override fun mark() {
-    NSUserDefaults.standardUserDefaults.setBool(true, SENTINEL_KEY)
-  }
-
-  private companion object {
-    const val SENTINEL_KEY = "com.pillow.mobile.install_sentinel"
-  }
 }
 
 private class IosAudienceSecureStore : AudienceSecureStore {

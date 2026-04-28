@@ -231,6 +231,8 @@ private class FakeAudienceClient(
 
   override suspend fun start() = Unit
 
+  override fun wasFreshInstallOnLastStart(): Boolean = false
+
   override suspend fun onAppForeground(forceHeartbeat: Boolean): AudienceState = state.value
 
   override suspend fun onAppBackground() = Unit

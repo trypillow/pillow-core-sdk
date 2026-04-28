@@ -8,7 +8,6 @@ import com.pillow.mobile.audience.runtime.AudienceClock
 import com.pillow.mobile.audience.runtime.AudienceDependencies
 import com.pillow.mobile.audience.runtime.AudienceHttpClient
 import com.pillow.mobile.audience.runtime.AudienceHttpResponse
-import com.pillow.mobile.audience.runtime.AudienceInstallSentinel
 import com.pillow.mobile.audience.runtime.AudienceLogger
 import com.pillow.mobile.audience.runtime.AudienceMetadata
 import com.pillow.mobile.audience.runtime.AudienceMetadataProvider
@@ -395,6 +394,73 @@ class AudienceClientTest {
       httpClient.baseUrls,
     )
   }
+
+  @Test
+  fun secondStartReusesPersistedInstallation() = runTest {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    AudienceDatabase.Schema.create(driver)
+    val driverFactory = SingleDriverFactory(driver)
+    val secureStore = InMemoryAudienceSecureStore()
+    val uuidGenerator = SequenceUuidGenerator(
+      ArrayDeque(listOf("installation-A", "anonymous-A")),
+    )
+
+    val first = testFixture(
+      httpClient = FakeAudienceHttpClient(),
+      sqlDriverFactory = driverFactory,
+      secureStore = secureStore,
+      uuidGenerator = uuidGenerator,
+    )
+    first.client.start()
+    val initialInstallationId = first.client.state().value.installationId
+    assertEquals(true, first.client.wasFreshInstallOnLastStart())
+    assertNotNull(initialInstallationId)
+
+    val second = testFixture(
+      httpClient = FakeAudienceHttpClient(),
+      sqlDriverFactory = driverFactory,
+      secureStore = secureStore,
+      uuidGenerator = uuidGenerator,
+    )
+    second.client.start()
+
+    assertEquals(false, second.client.wasFreshInstallOnLastStart())
+    assertEquals(initialInstallationId, second.client.state().value.installationId)
+  }
+
+  @Test
+  fun publishableKeyChangeRotatesInstallationOnNextStart() = runTest {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    AudienceDatabase.Schema.create(driver)
+    val driverFactory = SingleDriverFactory(driver)
+    val secureStore = InMemoryAudienceSecureStore()
+    val uuidGenerator = SequenceUuidGenerator(
+      ArrayDeque(listOf("installation-A", "anonymous-A", "installation-B", "anonymous-B")),
+    )
+
+    val first = testFixture(
+      httpClient = FakeAudienceHttpClient(),
+      sqlDriverFactory = driverFactory,
+      secureStore = secureStore,
+      uuidGenerator = uuidGenerator,
+      publishableKey = "pk_live_first",
+    )
+    first.client.start()
+    val initialInstallationId = first.client.state().value.installationId
+    assertNotNull(initialInstallationId)
+
+    val rekeyed = testFixture(
+      httpClient = FakeAudienceHttpClient(),
+      sqlDriverFactory = driverFactory,
+      secureStore = secureStore,
+      uuidGenerator = uuidGenerator,
+      publishableKey = "pk_live_second",
+    )
+    rekeyed.client.start()
+
+    assertEquals(true, rekeyed.client.wasFreshInstallOnLastStart())
+    assertNotEquals(initialInstallationId, rekeyed.client.state().value.installationId)
+  }
 }
 
 private data class TestFixture(
@@ -408,7 +474,7 @@ private fun testFixture(
   uuidGenerator: SequenceUuidGenerator = SequenceUuidGenerator(),
   secureStore: AudienceSecureStore = InMemoryAudienceSecureStore(),
   sqlDriverFactory: AudienceSqlDriverFactory? = null,
-  installSentinel: AudienceInstallSentinel = AlwaysFreshInstallSentinel(),
+  publishableKey: String = "pk_live_test",
 ): TestFixture {
   val driverFactory = sqlDriverFactory ?: run {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -419,7 +485,7 @@ private fun testFixture(
     client = AudienceClientImpl(
       config = AudienceClientConfig(
         baseUrl = "https://example.test",
-        publishableKey = "pk_live_test",
+        publishableKey = publishableKey,
         platform = AudiencePlatform.IOS,
         sdkVersion = "0.1.0-test",
       ),
@@ -428,7 +494,6 @@ private fun testFixture(
         secureStore = secureStore,
         metadataProvider = FixedMetadataProvider(),
         sqlDriverFactory = driverFactory,
-        installSentinel = installSentinel,
         clock = clock,
         uuidGenerator = uuidGenerator,
         logger = TestLogger,
@@ -584,17 +649,6 @@ private class SingleDriverFactory(
   private val driver: app.cash.sqldelight.db.SqlDriver,
 ) : AudienceSqlDriverFactory {
   override fun create(): app.cash.sqldelight.db.SqlDriver = driver
-}
-
-/** Sentinel that starts absent (simulating a fresh install) and remembers mark(). */
-private class AlwaysFreshInstallSentinel : AudienceInstallSentinel {
-  private var marked = false
-
-  override fun exists(): Boolean = marked
-
-  override fun mark() {
-    marked = true
-  }
 }
 
 private object TestLogger : AudienceLogger {

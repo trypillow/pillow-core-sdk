@@ -2,6 +2,7 @@ package com.pillow.mobile.ios.sdk
 
 import com.pillow.mobile.ios.audience.IosAudiencePropertyStore
 import com.pillow.mobile.ios.audience.createComponents
+import com.pillow.mobile.sdk.PillowSdkBuildConfig
 import com.pillow.mobile.sdk.reportPillowSdkError
 import com.pillow.mobile.audience.runtime.AudienceClient
 import com.pillow.mobile.audience.runtime.AudienceClientConfig
@@ -74,20 +75,20 @@ internal class IosPillowSdkRuntime {
     )
     studyRuntime = runtime
 
-    val freshInstall = !components.dependencies.installSentinel.exists()
     val appIsActive = isApplicationActive()
     isAppInForeground = appIsActive
 
     initializationJob = scope.launch {
       mutex.withLock {
-        if (freshInstall) {
+        client.start()
+
+        if (client.wasFreshInstallOnLastStart()) {
           propertyStore.clearExternalId()
           propertyStore.clearUserProperties()
           runtime.clearAllStoredSessions()
           runtime.clearLaunchStudyInstruction()
         }
 
-        client.start()
         client.setUserProperties(propertyStore.readUserProperties())
         propertyStore.readExternalId()?.let { externalId ->
           client.identify(externalId)
@@ -386,9 +387,7 @@ internal class IosPillowSdkRuntime {
     )
   }
 
-  private fun sdkVersion(): String =
-    (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String)
-      ?: "0.1.0"
+  private fun sdkVersion(): String = PillowSdkBuildConfig.SDK_VERSION
 
   private fun sdkUserAgent(): String = "PillowSDK/${sdkVersion()} (iOS)"
 

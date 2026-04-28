@@ -65,13 +65,13 @@ internal class AudienceClientImpl(
   )
   private val metadataProvider = dependencies.metadataProvider
   private val store = AudienceStateStore(dependencies.sqlDriverFactory.create())
-  private val installSentinel = dependencies.installSentinel
   private val clock = dependencies.clock
   private val uuidGenerator = dependencies.uuidGenerator
   private val logger = dependencies.logger
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   private var retryJob: Job? = null
   private var sessionTokenCache: String? = null
+  private var freshInstallOnLastStart = false
   private val state = MutableStateFlow(
     AudienceState(
       status = AudienceStatus.UNINITIALIZED,
@@ -85,6 +85,8 @@ internal class AudienceClientImpl(
   private val mutex = Mutex()
 
   override fun state(): StateFlow<AudienceState> = state
+
+  override fun wasFreshInstallOnLastStart(): Boolean = freshInstallOnLastStart
 
   override suspend fun start() {
     mutex.withLock {
@@ -244,23 +246,28 @@ internal class AudienceClientImpl(
     }
 
     val now = now()
-    val freshInstall = !installSentinel.exists()
+    val installation = store.readInstallation()
     val publishableKeyChanged = detectPublishableKeyChange()
 
-    val installation = store.readInstallation()
-    if (installation == null || freshInstall || publishableKeyChanged) {
-      if (installation != null && (freshInstall || publishableKeyChanged)) {
-        val reason = if (freshInstall) "Reinstall detected" else "Publishable key changed"
-        logger.info("$reason, clearing cached state")
-        store.transaction {
-          store.clearSession()
-          store.clearProfile()
-          store.deleteOperationsMatching { true }
-        }
-        clearSessionTokenLocked()
-        secureStore.clearValue(AUDIENCE_RUNTIME_ENDPOINTS_KEY)
-        writeLaunchStudyInstruction(secureStore, null)
+    // The SQLite installation row is the source of truth for "is this a fresh install".
+    // Absence means either a brand-new install or a reinstall that wiped the app sandbox;
+    // either way, any keychain residue from a previous lifetime is now stale.
+    // Pub-key change rotates the install_id so the previous account stops seeing this device.
+    val needsFreshInstall = installation == null || publishableKeyChanged
+    if (needsFreshInstall) {
+      if (installation == null) {
+        logger.info("No installation row found, treating as fresh install")
+      } else if (publishableKeyChanged) {
+        logger.info("Publishable key changed, clearing cached state")
       }
+      store.transaction {
+        store.clearSession()
+        store.clearProfile()
+        store.deleteOperationsMatching { true }
+      }
+      clearSessionTokenLocked()
+      secureStore.clearValue(AUDIENCE_RUNTIME_ENDPOINTS_KEY)
+      writeLaunchStudyInstruction(secureStore, null)
       store.saveInstallation(
         InstallationStateRecord(
           installationId = uuidGenerator.generate(),
@@ -270,7 +277,7 @@ internal class AudienceClientImpl(
         ),
       )
     }
-    installSentinel.mark()
+    freshInstallOnLastStart = needsFreshInstall
 
     val snapshot = freshSnapshot()
     if (snapshot.session?.sessionId != null && readSessionTokenLocked().isNullOrBlank()) {

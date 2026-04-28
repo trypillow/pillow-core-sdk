@@ -8,6 +8,7 @@ import com.pillow.mobile.android.audience.AndroidAudienceClientFactory
 import com.pillow.mobile.android.audience.AndroidPillowSdkPropertyStore
 import com.pillow.mobile.android.audience.createEncryptedPreferences
 import com.pillow.mobile.android.study.PillowStudyPresenter
+import com.pillow.mobile.sdk.PillowSdkBuildConfig
 import com.pillow.mobile.sdk.reportPillowSdkError
 import com.pillow.mobile.audience.runtime.AudienceClient
 import com.pillow.mobile.audience.runtime.AudienceClientConfig
@@ -63,7 +64,7 @@ internal class AndroidPillowSdkRuntime {
         name = PREFS_NAME,
       ),
     )
-    val sdkVersion = sdkVersion(application)
+    val sdkVersion = sdkVersion()
     val components = AndroidAudienceClientFactory.create(
       context = application,
       config = AudienceClientConfig(
@@ -76,8 +77,6 @@ internal class AndroidPillowSdkRuntime {
     )
     sdkLogger = components.config.logger
     activeSdkVersion = sdkVersion
-
-    val freshInstall = !components.dependencies.installSentinel.exists()
 
     initializationJob = scope.launch {
       mutex.withLock {
@@ -94,7 +93,9 @@ internal class AndroidPillowSdkRuntime {
         )
         studyRuntime = runtime
 
-        if (freshInstall) {
+        components.audienceClient.start()
+
+        if (components.audienceClient.wasFreshInstallOnLastStart()) {
           store.clearExternalId()
           store.clearUserProperties()
           runtime.clearAllStoredSessions()
@@ -127,7 +128,6 @@ internal class AndroidPillowSdkRuntime {
             }
           },
         ).also { observer -> observer.install(application) }
-        components.audienceClient.start()
         components.audienceClient.setUserProperties(store.readUserProperties())
         store.readExternalId()?.let { externalId ->
           components.audienceClient.identify(externalId)
@@ -459,12 +459,7 @@ internal class AndroidPillowSdkRuntime {
     return activity
   }
 
-  private fun sdkVersion(context: Context): String =
-    try {
-      context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.1.0"
-    } catch (_: Exception) {
-      "0.1.0"
-    }
+  private fun sdkVersion(): String = PillowSdkBuildConfig.SDK_VERSION
 
   private fun resolveBaseUrl(context: Context): String {
     val appInfo = try {

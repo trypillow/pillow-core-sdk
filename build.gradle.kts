@@ -8,6 +8,36 @@ plugins {
   alias(libs.plugins.sqldelight)
 }
 
+// Read VERSION_NAME from gradle.properties (mirrored to public/android/gradle.properties
+// for Maven Central and public/ios/version.txt for CocoaPods/SPM). Embedding it as a
+// Kotlin constant ensures audience telemetry reports the SDK version, not the host app's
+// CFBundleShortVersionString / package versionName.
+val sdkVersionName: String = providers.gradleProperty("VERSION_NAME").get()
+
+val generatedSdkBuildConfigDir = layout.buildDirectory.dir("generated/sources/sdkBuildConfig/commonMain/kotlin")
+
+val generateSdkBuildConfig =
+  tasks.register("generateSdkBuildConfig") {
+    val outputDir = generatedSdkBuildConfigDir
+    val versionName = sdkVersionName
+    inputs.property("sdkVersion", versionName)
+    outputs.dir(outputDir)
+    doLast {
+      val target = outputDir.get().asFile
+        .resolve("com/pillow/mobile/sdk/PillowSdkBuildConfig.kt")
+      target.parentFile.mkdirs()
+      target.writeText(
+        """
+        package com.pillow.mobile.sdk
+
+        internal object PillowSdkBuildConfig {
+          const val SDK_VERSION: String = "$versionName"
+        }
+        """.trimIndent() + "\n",
+      )
+    }
+  }
+
 kotlin {
   androidTarget()
   jvm("desktop") {
@@ -36,7 +66,12 @@ kotlin {
   }
 
   sourceSets {
-    val commonMain by getting
+    val commonMain by getting {
+      // Passing the TaskProvider (not just the dir) lets Gradle auto-wire the
+      // generation task as a dependency of every Kotlin compile task that
+      // consumes commonMain — no eager `tasks.matching` traversal needed.
+      kotlin.srcDir(generateSdkBuildConfig)
+    }
     val commonTest by getting
     val androidMain by getting
     val desktopMain by getting

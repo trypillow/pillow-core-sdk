@@ -49,6 +49,15 @@ public data class AudienceClientConfig(
 public interface AudienceClient {
   public suspend fun start()
 
+  /**
+   * True iff the most recent call to `start()` rotated the installation_id —
+   * either because no SQLite installation row existed (first install or reinstall)
+   * or because the publishable key changed (account switch). Platform runtimes
+   * use this to clear local stashes (cached external_id, study sessions, launch
+   * study instructions) that may have survived the underlying state wipe.
+   */
+  public fun wasFreshInstallOnLastStart(): Boolean
+
   public suspend fun onAppForeground(forceHeartbeat: Boolean = false): AudienceState
 
   public suspend fun onAppBackground()
@@ -146,7 +155,6 @@ internal data class AudienceDependencies(
   val secureStore: AudienceSecureStore,
   val metadataProvider: AudienceMetadataProvider,
   val sqlDriverFactory: AudienceSqlDriverFactory,
-  val installSentinel: AudienceInstallSentinel,
   val clock: AudienceClock,
   val uuidGenerator: AudienceUuidGenerator,
   val logger: AudienceLogger,
@@ -154,17 +162,4 @@ internal data class AudienceDependencies(
 
 internal interface AudienceSqlDriverFactory {
   fun create(): app.cash.sqldelight.db.SqlDriver
-}
-
-/**
- * Detects fresh installs (or reinstalls) by writing a sentinel to a location
- * that does NOT survive app uninstall. On Android this is `noBackupFilesDir`
- * (excluded from auto-backup); on iOS it is `NSUserDefaults` (deleted with app sandbox).
- *
- * If the sentinel is absent, the SDK treats the launch as a new installation
- * and generates a fresh installationId.
- */
-internal interface AudienceInstallSentinel {
-  fun exists(): Boolean
-  fun mark()
 }
